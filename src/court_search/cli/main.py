@@ -136,6 +136,8 @@ def ingest_full_cmd(
     activate: bool = typer.Option(False, "--activate"),
     shards: int = typer.Option(2, "--shards"),
     chunk_gib: int = typer.Option(80, "--chunk-gib"),
+    threads: int = typer.Option(12, "--threads"),
+    bulk_size: int = typer.Option(400, "--bulk-size"),
 ) -> None:
     from court_search.ingest.full import ALL_JURISDICTIONS
 
@@ -149,6 +151,8 @@ def ingest_full_cmd(
         activate=activate,
         shards=shards,
         chunk_gib=chunk_gib,
+        thread_count=threads,
+        bulk_size=bulk_size,
     )
     typer.echo(json.dumps(report, ensure_ascii=False, indent=2, default=str))
 
@@ -163,6 +167,55 @@ def restore_archive_cmd(
     service = build_service(cfg)
     report = restore_archive(cfg, service.store, name=name, activate=activate)
     typer.echo(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+
+
+@app.command("embed-sections")
+def embed_sections_cmd() -> None:
+    from court_search.embed.run import list_sections
+
+    typer.echo(json.dumps(list_sections(), ensure_ascii=False, indent=2))
+
+
+@app.command("chunk-passages")
+def chunk_passages_cmd(
+    section: str = typer.Option(..., "--section", help="civil | administrative | criminal | commercial | administrative_offense"),
+    config: Optional[Path] = typer.Option(None, "--config"),
+    limit_files: Optional[int] = typer.Option(None, "--limit-files"),
+    spec_name: str = typer.Option("bge-m3-dense-v1", "--spec-name"),
+) -> None:
+    from court_search.embed.run import chunk_section
+
+    report = chunk_section(
+        load_config(_config(config)),
+        section_id=section,
+        limit_files=limit_files,
+        spec_name=spec_name,
+    )
+    typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+@app.command("embed-passages")
+def embed_passages_cmd(
+    section: str = typer.Option(..., "--section"),
+    config: Optional[Path] = typer.Option(None, "--config"),
+    batch_size: int = typer.Option(16, "--batch-size", help="16 on 3060; try 64–128 on 5090"),
+    max_length: int = typer.Option(1000, "--max-length"),
+    device: Optional[str] = typer.Option(None, "--device"),
+    limit_files: Optional[int] = typer.Option(None, "--limit-files"),
+    spec_name: str = typer.Option("bge-m3-dense-v1", "--spec-name"),
+) -> None:
+    from court_search.embed.run import embed_section
+
+    report = embed_section(
+        load_config(_config(config)),
+        section_id=section,
+        batch_size=batch_size,
+        max_length=max_length,
+        device=device,
+        limit_files=limit_files,
+        spec_name=spec_name,
+    )
+    typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
 
 
 @app.command("activate")

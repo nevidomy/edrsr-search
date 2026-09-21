@@ -39,6 +39,8 @@ set +e
   --name full-v1 \
   --shards 4 \
   --chunk-gib 80 \
+  --threads 12 \
+  --bulk-size 400 \
   2>&1 | tee -a "$LOG"
 status=${PIPESTATUS[0]}
 set -e

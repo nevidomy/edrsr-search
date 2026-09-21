@@ -44,6 +44,8 @@ def ingest_full(
     activate_after_first_chunk: bool = False,
     shards: int = 2,
     chunk_gib: int = DEFAULT_CHUNK_GIB,
+    thread_count: int = 12,
+    bulk_size: int = 400,
 ) -> dict[str, Any]:
     if config.search.backend != "opensearch":
         raise ValueError("ingest-full requires search.backend=opensearch")
@@ -95,7 +97,8 @@ def ingest_full(
     )
     print(
         f"full ingest {name}: chunk={current_chunk} {chunk_index} "
-        f"roll>={chunk_gib}GiB rows={inventory['rows']:,} files={inventory['files']} "
+        f"roll>={chunk_gib}GiB threads={thread_count} bulk={bulk_size} "
+        f"rows={inventory['rows']:,} files={inventory['files']} "
         f"archive={archive_root}",
         file=sys.stderr,
     )
@@ -140,7 +143,15 @@ def ingest_full(
             key = f"{source.repo}:{path.name}"
             if key in completed:
                 continue
-            file_taken, file_skipped, file_errors = _index_file(index, source, name, path, chunk_index)
+            file_taken, file_skipped, file_errors = _index_file(
+                index,
+                source,
+                name,
+                path,
+                chunk_index,
+                thread_count=thread_count,
+                bulk_size=bulk_size,
+            )
             accepted += file_taken
             errors += file_errors
             processed_rows += file_taken + sum(file_skipped.values())
@@ -329,11 +340,19 @@ def _index_file(
     generation: str,
     path: Path,
     index_name: str,
+    *,
+    thread_count: int,
+    bulk_size: int,
 ) -> tuple[int, Counter, int]:
     rejected: Counter[str] = Counter()
     records = _iter_file_records(path, source, rejected)
     result = index.bulk_index(
-        generation, records, finalize=False, chunk_size=200, thread_count=4, index_name=index_name
+        generation,
+        records,
+        finalize=False,
+        chunk_size=bulk_size,
+        thread_count=thread_count,
+        index_name=index_name,
     )
     return int(result["indexed"]), rejected, int(result["errors"])
 
