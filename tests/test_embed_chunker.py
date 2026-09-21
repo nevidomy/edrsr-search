@@ -17,6 +17,10 @@ def test_short_text_is_one_passage() -> None:
     passages = chunk_text("Коротке рішення суду.", doc_id="1", text_hash="abc")
     assert len(passages) == 1
     assert passages[0]["passage_id"].startswith("1:abc:" + CHUNKING_VERSION)
+    huge = "абзац " * 8000
+    long_passages = chunk_text(huge, doc_id="3", text_hash="ghi")
+    assert len(long_passages) > 1
+    assert all(len(item["text"]) <= 3000 + 20 for item in long_passages)
     assert passages[0]["char_start"] == 0
 
 

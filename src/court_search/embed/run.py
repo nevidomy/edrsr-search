@@ -94,7 +94,6 @@ def _run_section(
     (out_dir / "files").mkdir(parents=True, exist_ok=True)
     (out_dir / "shards").mkdir(parents=True, exist_ok=True)
     encoder = _load_encoder(batch_size=batch_size, max_length=max_length, device=device) if encode else None
-    count_tokens = encoder.count_tokens if encoder else estimate_tokens
     started = time.perf_counter()
     states = _load_file_states(out_dir)
     already = sum(1 for path in files if _is_done(states.get(path.name), encode, out_dir))
@@ -111,8 +110,10 @@ def _run_section(
         existing = states.get(path.name)
         if _is_done(existing, encode, out_dir):
             continue
-        rows = list(_iter_passages(path, source, count_tokens))
+        file_started = time.perf_counter()
+        rows = list(_iter_passages(path, source, estimate_tokens))
         vectors = encoder.encode([row["text"] for row in rows]) if encoder and rows else None
+        file_s = time.perf_counter() - file_started
         shard_rel = f"shards/{path.stem}.parquet"
         shard_path = out_dir / shard_rel
         _write_shard(shard_path, rows, vectors)
@@ -140,8 +141,9 @@ def _run_section(
             encode=encode,
             elapsed_s=elapsed,
         )
+        rate = (len(rows) / file_s) if file_s > 0 else 0
         print(
-            f"{path.name} passages={len(rows)} "
+            f"{path.name} passages={len(rows)} {rate:.0f}/s "
             f"done={sum(1 for item in files if _is_done(states.get(item.name), encode, out_dir))}/{len(files)}",
             file=sys.stderr,
         )
@@ -324,15 +326,11 @@ def _write_shard(path: Path, rows: list[dict[str, Any]], vectors: Any | None) ->
 
 
 class _Encoder:
-    def __init__(self, model: Any, tokenizer: Any, batch_size: int, max_length: int, device: str) -> None:
+    def __init__(self, model: Any, batch_size: int, max_length: int, device: str) -> None:
         self.model = model
-        self.tokenizer = tokenizer
         self.batch_size = batch_size
         self.max_length = max_length
         self.device = device
-
-    def count_tokens(self, text: str) -> int:
-        return len(self.tokenizer.encode(text, add_special_tokens=False, truncation=False))
 
     def encode(self, texts: list[str]) -> list[Any]:
         if not texts:
@@ -343,7 +341,7 @@ class _Encoder:
                 batch_size=self.batch_size,
                 normalize_embeddings=True,
                 convert_to_numpy=True,
-                show_progress_bar=False,
+                show_progress_bar=len(texts) >= 2048,
             )
         )
 
@@ -352,15 +350,19 @@ def _load_encoder(*, batch_size: int, max_length: int, device: str | None) -> _E
     try:
         import torch
         from sentence_transformers import SentenceTransformer
-        from transformers import AutoTokenizer
     except ImportError as exc:
         raise RuntimeError(
             "GPU extra missing. On the GPU machine: pip install -e '.[gpu]' "
             "or pip install -r deployment/gpu/requirements.txt"
         ) from exc
     chosen = device or ("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"loading {MODEL_ID} on {chosen} batch={batch_size} max_length={max_length}", file=sys.stderr)
-    model = SentenceTransformer(MODEL_ID, device=chosen)
+    print(f"loading {MODEL_ID} on {chosen} batch={batch_size} max_length={max_length} fp16", file=sys.stderr)
+    kwargs: dict[str, Any] = {"device": chosen}
+    try:
+        model = SentenceTransformer(MODEL_ID, model_kwargs={"torch_dtype": torch.float16}, **kwargs)
+    except TypeError:
+        model = SentenceTransformer(MODEL_ID, **kwargs)
+        if chosen == "cuda":
+            model = model.half()
     model.max_seq_length = max_length
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-    return _Encoder(model, tokenizer, batch_size, max_length, chosen)
+    return _Encoder(model, batch_size, max_length, chosen)

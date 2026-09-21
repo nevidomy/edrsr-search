@@ -5,7 +5,7 @@ from typing import Any
 
 from court_search.text.paragraphs import split_paragraphs
 
-CHUNKING_VERSION = "para-pack-v1"
+CHUNKING_VERSION = "para-pack-v2"
 TARGET_TOKENS = 800
 HARD_LIMIT_TOKENS = 1000
 OVERLAP_TOKENS = 80
@@ -38,7 +38,14 @@ def chunk_text(
         if count_tokens(piece) <= hard_limit_tokens:
             pieces.append((para.char_start, para.char_end, piece))
             continue
-        pieces.extend(_split_long(piece, para.char_start, count_tokens, hard_limit_tokens, overlap_tokens))
+        pieces.extend(
+            split_long_chars(
+                piece,
+                para.char_start,
+                max_chars=hard_limit_tokens * 3,
+                overlap_chars=overlap_tokens * 3,
+            )
+        )
 
     packed: list[tuple[int, int, str]] = []
     buf_start = 0
@@ -110,4 +117,27 @@ def _split_long(
         overlap = min(best - cursor, max(1, overlap_tokens * 3))
         nxt = best - overlap
         cursor = nxt if nxt > cursor else best
+    return parts
+
+
+def split_long_chars(
+    text: str,
+    origin: int,
+    *,
+    max_chars: int,
+    overlap_chars: int,
+) -> list[tuple[int, int, str]]:
+    """Window a long paragraph by characters. Do not call a tokenizer here."""
+    parts: list[tuple[int, int, str]] = []
+    cursor = 0
+    length = len(text)
+    step = max(1, max_chars)
+    overlap = min(step - 1, max(0, overlap_chars))
+    while cursor < length:
+        end = min(length, cursor + step)
+        parts.append((origin + cursor, origin + end, text[cursor:end]))
+        if end >= length:
+            break
+        nxt = end - overlap
+        cursor = nxt if nxt > cursor else end
     return parts
