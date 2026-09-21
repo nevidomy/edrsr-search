@@ -22,3 +22,33 @@ else
   exit 1
 fi
 mkdir -p "$HOME/data/edrsr/embeddings" "$HF_HOME"
+SETTINGS=${SETTINGS:-$HOME/data/edrsr/embeddings/settings.json}
+
+read_setting() {
+  local key=$1 default=$2
+  if [ ! -f "$SETTINGS" ]; then
+    echo "$default"
+    return
+  fi
+  "$PYTHON" -c "import json; print(json.load(open(r'''$SETTINGS''')).get('$key', $default))"
+}
+
+save_settings() {
+  local batch=$1 length=$2
+  "$PYTHON" -c "
+import json
+from datetime import UTC, datetime
+from pathlib import Path
+path = Path(r'''$SETTINGS''')
+data = {}
+if path.exists():
+    data = json.loads(path.read_text())
+data.update({
+    'batch_size': int($batch),
+    'max_length': int($length),
+    'updated_at': datetime.now(UTC).isoformat(),
+})
+path.write_text(json.dumps(data, indent=2) + '\n')
+print(path)
+"
+}
