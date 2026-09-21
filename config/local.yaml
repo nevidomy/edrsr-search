@@ -25,6 +25,9 @@ sources:
 storage:
   root: /home/nevidomy/work/edrsr/data
   archive: /mnt/f/edrsr
+  embeddings: /home/nevidomy/data/edrsr/embeddings
+  chunks: /home/nevidomy/data/edrsr/chunks
+  models: /home/nevidomy/data/edrsr/models
 
 search:
   url: http://127.0.0.1:9200

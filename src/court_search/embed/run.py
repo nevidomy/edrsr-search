@@ -161,11 +161,6 @@ def _run_section(
         **{key: checkpoint[key] for key in ("encode", "files_done", "files_total", "documents", "passages")},
     }
     _atomic_write_json(out_dir / "report.json", report)
-    config.storage.reports.mkdir(parents=True, exist_ok=True)
-    (config.storage.reports / f"embed-{section_id}.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
     return report
 
 

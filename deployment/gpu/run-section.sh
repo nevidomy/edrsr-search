@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Copy the whole section directory. JSON state travels with the shards:
+#   ~/data/edrsr/embeddings/bge-m3-dense-v1/<section>/
 #   spec.json  checkpoint.json  report.json  files/*.json  shards/*.parquet
 # Resume is per source parquet file; re-running skips completed files.
 #
@@ -12,11 +13,13 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 SECTION=${1:?usage: run-section.sh <section>}
 export COURT_SEARCH_CONFIG=${COURT_SEARCH_CONFIG:-$ROOT/config/local.yaml}
+export HF_HOME=${HF_HOME:-$HOME/data/edrsr/models}
 BATCH_SIZE=${BATCH_SIZE:-16}
 MAX_LENGTH=${MAX_LENGTH:-1000}
 LIMIT=${LIMIT_FILES:-}
 
 cd "$ROOT"
+mkdir -p "$HOME/data/edrsr/embeddings" "$HF_HOME"
 args=(embed-passages --section "$SECTION" --batch-size "$BATCH_SIZE" --max-length "$MAX_LENGTH")
 if [ -n "$LIMIT" ]; then
   args+=(--limit-files "$LIMIT")
