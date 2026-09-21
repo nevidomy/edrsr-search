@@ -1,0 +1,35 @@
+services:
+  opensearch:
+    build:
+      context: ./opensearch
+      dockerfile: Dockerfile
+    image: court-search-opensearch:3.8.0-uk
+    environment:
+      - cluster.name=court-search
+      - node.name=opensearch
+      - discovery.type=single-node
+      - bootstrap.memory_lock=false
+      - OPENSEARCH_JAVA_OPTS=-Xms12g -Xmx12g
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-CourtSearch_ChangeMe_1}
+      - plugins.security.disabled=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - path.repo=/usr/share/opensearch/snapshots
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "127.0.0.1:9200:9200"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+      - /mnt/f/edrsr/snapshots:/usr/share/opensearch/snapshots
+    mem_limit: 20g
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://127.0.0.1:9200 >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+volumes:
+  opensearch-data:

@@ -1,0 +1,15 @@
+python: "3.12"
+mcp: ">=2.2,<3"
+opensearch: "3.8.0"
+opensearch_plugin: analysis-ukrainian
+embedding:
+  model: BAAI/bge-m3
+  revision: RESOLVE_AND_PIN_BEFORE_BUILD
+  dimension: 1024
+  normalize: true
+reranker:
+  model: BAAI/bge-reranker-v2-m3
+  revision: RESOLVE_AND_PIN_BEFORE_BUILD
+retrieval_version: lexical-fts5-v1
+tool_schema_version: "1"
+api_schema_version: "1"

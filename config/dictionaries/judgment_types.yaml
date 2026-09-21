@@ -1,0 +1,17 @@
+version: edrsr-judgment-form-v1
+provenance: 'EDRSR judgment form IDs recorded in the State Judicial Administration
+  instruction on copies of court decisions submitted to the register (вирок=1, рішення=2,
+  постанова=3, ухвала суду=4, судовий наказ=5). Additional codes found in the snapshot
+  are kept with null labels until an official dictionary file is imported.
+
+  '
+labels:
+  '1': Вирок
+  '2': Рішення
+  '3': Постанова
+  '4': Ухвала суду
+  '5': Судовий наказ
+  '0': null
+  '10': null
+  '6': null
+  '7': null

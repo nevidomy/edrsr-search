@@ -1,0 +1,16 @@
+version: edrsr-justice-kind-v1
+provenance: >
+  EDRSR justice_kinds codes as documented in the Hugging Face dataset cards
+  and the data.gov.ua EDRSR open-data package (justice_kinds.csv).
+labels:
+  civil: Цивільне судочинство
+  administrative: Адміністративне судочинство
+  criminal: Кримінальне судочинство
+  commercial: Господарське судочинство
+  administrative_offense: Справи про адміністративні правопорушення
+source_codes:
+  "1": civil
+  "2": criminal
+  "3": commercial
+  "4": administrative
+  "5": administrative_offense

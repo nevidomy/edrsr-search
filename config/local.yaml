@@ -1,0 +1,54 @@
+raw_root: /home/nevidomy/data/edrsr
+
+sources:
+  - repo: overthelex/edrsr-tspk
+    path: /home/nevidomy/data/edrsr/edrsr-tspk
+    revision: null
+    jurisdiction: civil
+  - repo: overthelex/edrsr-kas
+    path: /home/nevidomy/data/edrsr/edrsr-kas
+    revision: null
+    jurisdiction: administrative
+  - repo: overthelex/edrsr-kpk
+    path: /home/nevidomy/data/edrsr/edrsr-kpk
+    revision: null
+    jurisdiction: criminal
+  - repo: overthelex/edrsr-gpk
+    path: /home/nevidomy/data/edrsr/edrsr-gpk
+    revision: null
+    jurisdiction: commercial
+  - repo: overthelex/edrsr-kupap
+    path: /home/nevidomy/data/edrsr/edrsr-kupap
+    revision: null
+    jurisdiction: administrative_offense
+
+storage:
+  root: /home/nevidomy/work/edrsr/data
+  archive: /mnt/f/edrsr
+
+search:
+  url: http://127.0.0.1:9200
+  backend: opensearch
+  lexical_candidates: 100
+  vector_passage_candidates: 300
+  fusion_k: 60
+  rerank_decisions: 50
+  passages_per_decision: 2
+  request_timeout_seconds: 30
+
+api:
+  host: 127.0.0.1
+  internal_port: 8000
+  auth_profile: private_token
+  token_file: /home/nevidomy/work/edrsr/data/secrets/api.token
+  token_hashes_file: /home/nevidomy/work/edrsr/data/secrets/api-token-hashes
+  default_response_chars: 30000
+  allowed_hosts:
+    - 127.0.0.1
+    - 127.0.0.1:8000
+    - localhost
+    - localhost:8000
+    - nevidomy-win11.tail60521e.ts.net
+  public_origin: https://nevidomy-win11.tail60521e.ts.net
+
+dictionaries_dir: /home/nevidomy/work/edrsr/config/dictionaries

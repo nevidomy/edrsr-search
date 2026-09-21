@@ -1,0 +1,510 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "search_decisions",
+      "description": "search_decisions",
+      "parameters": {
+        "$defs": {
+          "Jurisdiction": {
+            "enum": [
+              "civil",
+              "administrative",
+              "criminal",
+              "commercial",
+              "administrative_offense"
+            ],
+            "title": "Jurisdiction",
+            "type": "string"
+          },
+          "SearchFilters": {
+            "additionalProperties": false,
+            "properties": {
+              "jurisdictions": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "$ref": "#/$defs/Jurisdiction"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Jurisdictions"
+              },
+              "date_from": {
+                "anyOf": [
+                  {
+                    "format": "date",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Date From"
+              },
+              "date_to": {
+                "anyOf": [
+                  {
+                    "format": "date",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Date To"
+              },
+              "court_codes": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Court Codes"
+              },
+              "judgment_codes": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Judgment Codes"
+              },
+              "category_codes": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Category Codes"
+              },
+              "case_number": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Case Number"
+              }
+            },
+            "title": "SearchFilters",
+            "type": "object"
+          },
+          "SearchMode": {
+            "enum": [
+              "hybrid",
+              "lexical",
+              "semantic"
+            ],
+            "title": "SearchMode",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "query": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "mode": {
+            "$ref": "#/$defs/SearchMode",
+            "default": "hybrid"
+          },
+          "filters": {
+            "$ref": "#/$defs/SearchFilters"
+          },
+          "required_phrases": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Required Phrases",
+            "type": "array"
+          },
+          "limit": {
+            "default": 10,
+            "maximum": 20,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "rerank": {
+            "default": true,
+            "title": "Rerank",
+            "type": "boolean"
+          },
+          "allow_fallback": {
+            "default": true,
+            "title": "Allow Fallback",
+            "type": "boolean"
+          },
+          "max_response_chars": {
+            "default": 30000,
+            "maximum": 60000,
+            "minimum": 4000,
+            "title": "Max Response Chars",
+            "type": "integer"
+          },
+          "corpus_generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corpus Generation"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "SearchRequest",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_decision",
+      "description": "get_decision",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "doc_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Doc Id"
+          },
+          "document_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Document Version"
+          },
+          "corpus_generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corpus Generation"
+          },
+          "passage_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Passage Id"
+          },
+          "paragraph_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paragraph Start"
+          },
+          "paragraph_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paragraph End"
+          },
+          "max_response_chars": {
+            "default": 30000,
+            "maximum": 60000,
+            "minimum": 4000,
+            "title": "Max Response Chars",
+            "type": "integer"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "title": "ReadRequest",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_case_decisions",
+      "description": "get_case_decisions",
+      "parameters": {
+        "$defs": {
+          "Jurisdiction": {
+            "enum": [
+              "civil",
+              "administrative",
+              "criminal",
+              "commercial",
+              "administrative_offense"
+            ],
+            "title": "Jurisdiction",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "case_number": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Case Number",
+            "type": "string"
+          },
+          "court_codes": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Court Codes"
+          },
+          "jurisdictions": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/$defs/Jurisdiction"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Jurisdictions"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "corpus_generation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Corpus Generation"
+          },
+          "cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cursor"
+          }
+        },
+        "required": [
+          "case_number"
+        ],
+        "title": "CaseDecisionsRequest",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "lookup_filters",
+      "description": "lookup_filters",
+      "parameters": {
+        "$defs": {
+          "FilterField": {
+            "enum": [
+              "court",
+              "jurisdiction",
+              "judgment_type",
+              "category"
+            ],
+            "title": "FilterField",
+            "type": "string"
+          },
+          "Jurisdiction": {
+            "enum": [
+              "civil",
+              "administrative",
+              "criminal",
+              "commercial",
+              "administrative_offense"
+            ],
+            "title": "Jurisdiction",
+            "type": "string"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "$ref": "#/$defs/FilterField"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Query"
+          },
+          "jurisdiction": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Jurisdiction"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 50,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "FilterLookupRequest",
+        "type": "object"
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "get_corpus_info",
+      "description": "Inspect installed coverage and capabilities",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "corpus_generation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+]
