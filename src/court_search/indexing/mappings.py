@@ -52,6 +52,45 @@ def decision_index_body(*, shards: int = 1) -> dict[str, Any]:
     }
 
 
+def passage_index_name(spec_name: str = "bge-m3-dense-v1") -> str:
+    safe = spec_name.lower().replace("_", "-")
+    return f"passages-{safe}"
+
+
+def passage_index_body(*, shards: int = 2) -> dict[str, Any]:
+    return {
+        "settings": {
+            "index": {
+                "knn": True,
+                "number_of_shards": shards,
+                "number_of_replicas": 0,
+                "refresh_interval": "5s",
+            }
+        },
+        "mappings": {
+            "dynamic": "strict",
+            "properties": {
+                "passage_id": {"type": "keyword"},
+                "doc_id": {"type": "keyword"},
+                "jurisdiction": {"type": "keyword"},
+                "section": {"type": "keyword"},
+                "char_start": {"type": "integer"},
+                "char_end": {"type": "integer"},
+                "vector": {
+                    "type": "knn_vector",
+                    "dimension": 1024,
+                    "method": {
+                        "name": "hnsw",
+                        "engine": "lucene",
+                        "space_type": "cosinesimil",
+                        "parameters": {"ef_construction": 128, "m": 16},
+                    },
+                },
+            },
+        },
+    }
+
+
 def decision_index_name(generation: str) -> str:
     safe = generation.lower().replace("_", "-")
     return f"decisions-{safe}-0"

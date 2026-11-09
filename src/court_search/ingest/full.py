@@ -201,7 +201,7 @@ def ingest_full(
 
     persist(finished=True)
     if activate:
-        print("not activating: restore snapshots onto F: first, then court-search restore-archive", file=sys.stderr)
+        print("not activating: restore the snapshots onto the big data disk first (OPENSEARCH_DATA), then court-search restore-archive", file=sys.stderr)
     elapsed = prior_elapsed + (time.perf_counter() - started)
     progress.write(
         elapsed_s=elapsed,
@@ -248,7 +248,8 @@ def restore_archive(
     name: str,
     activate: bool = False,
 ) -> dict[str, Any]:
-    index = OpenSearchIndex(config.search)
+    tuning = config.search.model_copy(update={"request_timeout_seconds": 180})
+    index = OpenSearchIndex(tuning)
     if not index.ping():
         raise RuntimeError("OpenSearch is not reachable")
     checkpoint = _load_checkpoint(config.storage.normalized / name / "checkpoint.json", name)
@@ -263,15 +264,48 @@ def restore_archive(
         target = chunk["index"]
         snap = chunk.get("snapshot")
         print(f"restore {snap} -> {target}", file=sys.stderr)
-        if index.client.indices.exists(index=target):
-            print(f"  {target} already present", file=sys.stderr)
+        if _index_ready(index, target):
+            print(f"  {target} already complete", file=sys.stderr)
+        elif snap and _index_recovering(index, target):
+            print(f"  waiting for in-progress restore of {target}", file=sys.stderr)
+            index._wait_restore(repo, snap, target)
         elif snap:
-            index.restore_snapshot(repo, snap)
-        restored.append(target)
-    index.point_alias(decision_index_name(name), restored)
-    if activate:
+            if index.client.indices.exists(index=target):
+                print(f"  dropping incomplete {target}", file=sys.stderr)
+                index.delete_index(target)
+            index.restore_snapshot(repo, snap, target)
+        if _index_ready(index, target):
+            restored.append(target)
+            index.point_alias(decision_index_name(name), restored)
+            if activate:
+                store.activate(name)
+            print(f"  searchable {len(restored)}/{len(sealed)} chunks", file=sys.stderr)
+    if restored:
+        index.point_alias(decision_index_name(name), restored)
+    if activate and restored:
         store.activate(name)
     return {"generation": name, "alias": decision_index_name(name), "indices": restored, "activated": activate}
+
+
+def _index_ready(index: OpenSearchIndex, name: str) -> bool:
+    if not index.client.indices.exists(index=name):
+        return False
+    rows = index.client.cat.indices(index=name, format="json", request_timeout=180)
+    if not rows:
+        return False
+    row = rows[0]
+    if (row.get("health") or "") != "green" or (row.get("status") or "") != "open":
+        return False
+    if int(row.get("docs.count") or 0) <= 0:
+        return False
+    return not _index_recovering(index, name)
+
+
+def _index_recovering(index: OpenSearchIndex, name: str) -> bool:
+    if not index.client.indices.exists(index=name):
+        return False
+    recovery = index.client.cat.recovery(index=name, format="json", request_timeout=180)
+    return any(item.get("stage") not in {"done", None} for item in (recovery or []))
 
 
 def _inventory(sources: list[SourceConfig]) -> dict[str, int]:
@@ -293,7 +327,7 @@ def _recover_chunk(
     sealed = next((item for item in chunks if item.get("id") == current_chunk and item.get("snapshot")), None)
     if sealed:
         leftover = decision_chunk_index_name(generation, current_chunk)
-        print(f"chunk {current_chunk} already on F:; dropping leftover {leftover} from NVMe", file=sys.stderr)
+        print(f"chunk {current_chunk} already snapshotted; dropping leftover live index {leftover}", file=sys.stderr)
         index.delete_index(leftover)
         return current_chunk + 1
     return current_chunk
@@ -314,7 +348,7 @@ def _seal_chunk(
     index_name = decision_chunk_index_name(generation, chunk)
     snap = snapshot_id(chunk)
     store_bytes = index.index_store_bytes(index_name)
-    print(f"copying {index_name} ({store_bytes / 1e9:.1f}GB) from NVMe to F: snapshot {snap}", file=sys.stderr)
+    print(f"copying {index_name} ({store_bytes / 1e9:.1f}GB) into snapshot {snap}", file=sys.stderr)
     index.finalize_index(index_name)
     if not index.snapshot_exists(repo, snap):
         index.snapshot_index(repo, snap, index_name)
@@ -330,7 +364,7 @@ def _seal_chunk(
     index.delete_index(index_name)
     nxt = chunk + 1
     next_index = index.ensure_chunk(generation, nxt, shards=shards)
-    print(f"NVMe chunk dropped; next {nxt} ({next_index})", file=sys.stderr)
+    print(f"live chunk dropped; next {nxt} ({next_index})", file=sys.stderr)
     return chunks, nxt, next_index
 
 
@@ -466,11 +500,11 @@ def _save_generation(
         "chunks": len(chunks),
     }
     notes = [
-        "Full corpus: each chunk is built on NVMe, snapshotted to F:, then deleted locally.",
-        "Restore onto F: with court-search restore-archive before activating.",
+        "Full corpus: each chunk is built in the live cluster, snapshotted, then deleted from the live cluster.",
+        "Restore the snapshots with court-search restore-archive before activating.",
     ]
     if not finished:
-        notes.append("Ingest is still running; sealed chunks live on F: snapshots, not the live alias.")
+        notes.append("Ingest is still running; sealed chunks live in snapshots, not the live alias.")
     store.save_generation(
         name,
         selection_name="full",

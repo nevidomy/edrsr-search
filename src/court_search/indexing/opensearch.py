@@ -12,6 +12,8 @@ from court_search.indexing.mappings import (
     decision_chunk_index_name,
     decision_index_body,
     decision_index_name,
+    passage_index_body,
+    passage_index_name,
 )
 from court_search.indexing.records import record_from_source, source_from_record
 
@@ -99,14 +101,17 @@ class OpenSearchIndex:
         )
         return self._wait_snapshot(repo, snap)
 
-    def restore_snapshot(self, repo: str, snap: str) -> dict[str, Any]:
+    def restore_snapshot(self, repo: str, snap: str, index_name: str | None = None) -> dict[str, Any]:
+        body: dict[str, Any] = {"include_global_state": False}
+        if index_name:
+            body["indices"] = index_name
         self.client.snapshot.restore(
             repository=repo,
             snapshot=snap,
-            body={"include_global_state": False},
+            body=body,
             wait_for_completion=False,
         )
-        return self._wait_restore(repo, snap)
+        return self._wait_restore(repo, snap, index_name)
 
     def snapshot_exists(self, repo: str, snap: str) -> bool:
         try:
@@ -137,16 +142,26 @@ class OpenSearchIndex:
                 raise RuntimeError(f"snapshot {snap} {state}: {info.get('failures')}")
             time.sleep(10)
 
-    def _wait_restore(self, repo: str, snap: str) -> dict[str, Any]:
+    def _wait_restore(self, repo: str, snap: str, index_name: str | None = None) -> dict[str, Any]:
         while True:
-            recovery = self.client.cat.recovery(format="json")
-            active = [
-                row
-                for row in recovery
-                if row.get("type") == "snapshot" and row.get("stage") not in {"done", None}
-            ]
-            if not active:
-                if self.snapshot_exists(repo, snap):
+            if index_name and self.client.indices.exists(index=index_name):
+                recovery = self.client.cat.recovery(index=index_name, format="json")
+                active = [row for row in recovery if row.get("stage") not in {"done", None}]
+                health = self.client.cluster.health(index=index_name)
+                pending = int(health.get("unassigned_shards") or 0) + int(
+                    health.get("initializing_shards") or 0
+                )
+                if not active and pending == 0 and health.get("status") in {"green", "yellow"}:
+                    count = int(self.client.count(index=index_name).get("count") or 0)
+                    return {"snapshot": snap, "index": index_name, "docs": count}
+            elif not index_name:
+                recovery = self.client.cat.recovery(format="json")
+                active = [
+                    row
+                    for row in recovery
+                    if row.get("type") == "snapshot" and row.get("stage") not in {"done", None}
+                ]
+                if not active and self.snapshot_exists(repo, snap):
                     return {"snapshot": snap, "restored": True}
             time.sleep(10)
 
@@ -212,15 +227,84 @@ class OpenSearchIndex:
             self.finalize(generation)
         return {"indexed": int(success), "errors": int(errors), "index": name}
 
+    def ensure_passage_index(self, spec_name: str = "bge-m3-dense-v1", *, recreate: bool = False, shards: int = 2) -> str:
+        name = passage_index_name(spec_name)
+        if recreate and self.client.indices.exists(index=name):
+            self.client.indices.delete(index=name)
+        if not self.client.indices.exists(index=name):
+            self.client.indices.create(index=name, body=passage_index_body(shards=shards))
+        return name
+
+    def passage_count(self, spec_name: str = "bge-m3-dense-v1") -> int:
+        name = passage_index_name(spec_name)
+        if not self.client.indices.exists(index=name):
+            return 0
+        return int(self.client.count(index=name).get("count") or 0)
+
+    def bulk_passages(self, index_name: str, actions: Iterable[dict[str, Any]]) -> tuple[int, int]:
+        success = 0
+        errors = 0
+        for ok, _item in helpers.streaming_bulk(
+            self.client,
+            ({**action, "_index": index_name} for action in actions),
+            raise_on_error=False,
+            request_timeout=180,
+            chunk_size=200,
+            # Parallel loaders can fill the write queue: back off and retry 429s
+            # instead of silently counting those passages as failed.
+            max_retries=8,
+            initial_backoff=2,
+            max_backoff=120,
+        ):
+            if ok:
+                success += 1
+            else:
+                errors += 1
+        return success, errors
+
+    def knn_passages(
+        self,
+        vector: list[float],
+        *,
+        spec_name: str = "bge-m3-dense-v1",
+        k: int = 50,
+        jurisdictions: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        name = passage_index_name(spec_name)
+        if not self.client.indices.exists(index=name):
+            return []
+        knn: dict[str, Any] = {"vector": {"vector": vector, "k": k}}
+        if jurisdictions:
+            knn["vector"]["filter"] = {"terms": {"jurisdiction": jurisdictions}}
+        result = self.client.search(
+            index=name,
+            body={"size": k, "query": {"knn": knn}, "_source": True},
+            request_timeout=30,
+        )
+        hits = []
+        for hit in result.get("hits", {}).get("hits") or []:
+            src = hit.get("_source") or {}
+            src["score"] = float(hit.get("_score") or 0.0)
+            hits.append(src)
+        return hits
+
     def get(self, generation: str, doc_id: str) -> DecisionRecord | None:
         name = decision_index_name(generation)
+        # GET-by-id is a single-index op; the full-v1 alias spans many chunks.
         try:
-            hit = self.client.get(index=name, id=doc_id)
+            result = self.client.search(
+                index=name,
+                body={"query": {"ids": {"values": [doc_id]}}, "size": 1},
+            )
         except Exception:  # noqa: BLE001
             return None
-        src = hit.get("_source")
+        hits = result.get("hits", {}).get("hits") or []
+        if not hits:
+            return None
+        src = hits[0].get("_source")
         if not src:
             return None
+        src.setdefault("doc_id", hits[0].get("_id") or doc_id)
         return record_from_source(src)
 
     def count(self, generation: str) -> int:

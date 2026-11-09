@@ -93,7 +93,7 @@ def test_slice_search_and_citation(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     ingest_slice(config, service.store, name="test-slice", limit=10)
     info = service.get_corpus_info()
     assert info.ready is True
-    result = service.search(SearchRequest(query="поновлення строку", limit=5))
+    result = service.search(SearchRequest(query="поновлення строку", limit=5, rerank=False))
     assert result.returned_count == 1
     hit = result.results[0]
     record = service.store.get_decision(result.corpus_generation, hit.metadata.doc_id)

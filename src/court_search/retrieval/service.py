@@ -30,6 +30,7 @@ from court_search.domain.contracts import (
     SearchResponse,
 )
 from court_search.domain.enums import FilterField, SearchMode
+from court_search.retrieval.fusion import order_by_scores, rrf_fuse
 from court_search.domain.errors import (
     CorpusNotReady,
     InvalidArgument,
@@ -80,9 +81,12 @@ class SearchService:
         unknown_dates_excluded = bool(effective.date_from or effective.date_to)
         degradation: list[str] = []
         mode_used = SearchMode.LEXICAL
-        if request.mode == SearchMode.SEMANTIC:
+        semantic_ready = self._passage_count() > 0
+        if request.mode == SearchMode.SEMANTIC and not semantic_ready and not request.allow_fallback:
+            raise ModelUnavailable("Semantic retrieval is not indexed for this slice")
+        if request.mode == SearchMode.SEMANTIC and not semantic_ready:
             degradation.append("semantic_unavailable_fallback_lexical")
-        elif request.mode == SearchMode.HYBRID:
+        elif request.mode == SearchMode.HYBRID and not semantic_ready:
             degradation.append("hybrid_unavailable_lexical_only")
 
         filter_payload = _filter_payload(effective, request.required_phrases)
@@ -92,14 +96,22 @@ class SearchService:
             record = self._get_record(generation, exact_id)
             if record and _passes_filters(record, effective):
                 hits.append((record, 0.0, "exact"))
+        knn_passages: dict[str, list[dict[str, Any]]] = {}
         if not hits:
-            ranked = self._lexical_search(
+            hits, mode_used, extra, knn_passages = self._retrieve(
                 generation,
-                request.query,
-                filters=filter_payload,
-                limit=max(request.limit * 5, 50),
+                request,
+                filter_payload=filter_payload,
+                semantic_ready=semantic_ready,
             )
-            hits = [(record, score, "lexical") for record, score in ranked]
+            degradation.extend(extra)
+
+        rerank_used = False
+        if request.rerank and hits and hits[0][2] != "exact":
+            try:
+                hits, rerank_used = self._rerank_hits(request.query, hits, knn_passages)
+            except Exception as exc:  # noqa: BLE001
+                degradation.append(f"rerank_failed:{type(exc).__name__}")
 
         window = hits[:200]
         selected = window[: request.limit]
@@ -127,11 +139,11 @@ class SearchService:
             effective_query=request.query,
             effective_filters=effective,
             mode_used=mode_used,
-            rerank_used=False,
+            rerank_used=rerank_used,
             degradation_reasons=degradation,
             coverage=CoverageInfo(
                 lexical_decisions=self.store.count_decisions(generation),
-                semantic_decisions=0,
+                semantic_decisions=self._passage_count(),
                 semantic_complete=False,
                 generation=generation,
             ),
@@ -316,6 +328,10 @@ class SearchService:
         if isinstance(counts, dict) and counts.get("accepted") and lexical == 0:
             lexical = int(counts["accepted"])
         capabilities.extend(["search_decisions_lexical", "get_decision", "get_case_decisions"])
+        if self._passage_count() > 0:
+            capabilities.extend(["search_decisions_semantic", "search_decisions_hybrid"])
+        if _reranker_ready():
+            capabilities.append("search_decisions_rerank")
         notes.extend(json.loads(generation["notes_json"]))
         return CorpusInfo(
             request_id=_request_id(),
@@ -333,18 +349,159 @@ class SearchService:
             year_max=dmax.year if dmax else None,
             ingested_at=_parse_dt(generation.get("ingested_at")),
             lexical_coverage=lexical,
-            semantic_coverage=0,
+            semantic_coverage=self._passage_count(),
             semantic_complete=False,
-            reranker_ready=False,
-            embedding_spec=None,
+            reranker_ready=_reranker_ready(),
+            embedding_spec={"name": "bge-m3-dense-v1", "dimension": 1024} if self._passage_count() else None,
             capabilities=capabilities,
             notes=notes,
         )
 
     def _retrieval_version(self) -> str:
+        if self.opensearch is not None and self._passage_count() > 0:
+            if _reranker_ready():
+                return "hybrid-os-bge-m3-rerank-v1"
+            return "hybrid-os-bge-m3-v1"
         if self.opensearch is not None:
             return "lexical-os-uk-v1"
         return "lexical-fts5-v1"
+
+    def _passage_count(self) -> int:
+        if self.opensearch is None:
+            return 0
+        try:
+            return self.opensearch.passage_count()
+        except Exception:  # noqa: BLE001
+            return 0
+
+    def _retrieve(
+        self,
+        generation: str,
+        request: SearchRequest,
+        *,
+        filter_payload: dict[str, Any],
+        semantic_ready: bool,
+    ) -> tuple[list[tuple[DecisionRecord, float, str]], SearchMode, list[str], dict[str, list[dict[str, Any]]]]:
+        want_semantic = request.mode in {SearchMode.SEMANTIC, SearchMode.HYBRID} and semantic_ready
+        lexical_limit = max(request.limit * 5, 50)
+        lexical_rows = []
+        knn_passages: dict[str, list[dict[str, Any]]] = {}
+        if request.mode != SearchMode.SEMANTIC or not want_semantic:
+            lexical_rows = self._lexical_search(
+                generation, request.query, filters=filter_payload, limit=lexical_limit
+            )
+        if not want_semantic:
+            return (
+                [(record, score, "lexical") for record, score in lexical_rows],
+                SearchMode.LEXICAL,
+                [],
+                knn_passages,
+            )
+        try:
+            semantic_ids, knn_passages = self._semantic_hits(
+                request.query, filters=filter_payload, limit=lexical_limit
+            )
+        except Exception as exc:  # noqa: BLE001
+            extra = [f"semantic_encode_failed:{type(exc).__name__}"]
+            return (
+                [(record, score, "lexical") for record, score in lexical_rows],
+                SearchMode.LEXICAL,
+                extra,
+                {},
+            )
+        if request.mode == SearchMode.SEMANTIC:
+            hits = []
+            for doc_id, score in semantic_ids:
+                record = self._get_record(generation, doc_id)
+                if record is not None:
+                    hits.append((record, score, "semantic"))
+            if hits:
+                return hits, SearchMode.SEMANTIC, [], knn_passages
+            return (
+                [(record, score, "lexical") for record, score in lexical_rows],
+                SearchMode.LEXICAL,
+                ["semantic_empty_fallback_lexical"],
+                knn_passages,
+            )
+        fused = rrf_fuse(
+            [record.doc_id for record, _score in lexical_rows],
+            [doc_id for doc_id, _score in semantic_ids],
+            k=self.config.search.fusion_k,
+        )
+        by_id = {record.doc_id: (record, score) for record, score in lexical_rows}
+        for doc_id, score in semantic_ids:
+            by_id.setdefault(doc_id, (self._get_record(generation, doc_id), score))
+        hits = []
+        for doc_id in fused:
+            pair = by_id.get(doc_id)
+            if not pair or pair[0] is None:
+                continue
+            hits.append((pair[0], pair[1], "fusion"))
+        return hits, SearchMode.HYBRID, [], knn_passages
+
+    def _semantic_hits(
+        self, query: str, *, filters: dict[str, Any], limit: int
+    ) -> tuple[list[tuple[str, float]], dict[str, list[dict[str, Any]]]]:
+        from court_search.embed.query import encode_query
+
+        assert self.opensearch is not None
+        vector = encode_query(query)
+        hits = self.opensearch.knn_passages(
+            vector,
+            k=max(limit, self.config.search.vector_passage_candidates),
+            jurisdictions=[str(value) for value in (filters.get("jurisdictions") or [])] or None,
+        )
+        order: list[str] = []
+        by_doc: dict[str, list[dict[str, Any]]] = {}
+        for hit in hits:
+            doc_id = str(hit.get("doc_id") or "")
+            if not doc_id:
+                continue
+            if doc_id not in by_doc:
+                order.append(doc_id)
+            by_doc.setdefault(doc_id, []).append(
+                {
+                    "score": float(hit.get("score") or 0.0),
+                    "char_start": int(hit.get("char_start") or 0),
+                    "char_end": int(hit.get("char_end") or 0),
+                }
+            )
+        ranked = [(doc_id, by_doc[doc_id][0]["score"]) for doc_id in order]
+        return ranked, by_doc
+
+    def _rerank_hits(
+        self,
+        query: str,
+        hits: list[tuple[DecisionRecord, float, str]],
+        knn_passages: dict[str, list[dict[str, Any]]],
+    ) -> tuple[list[tuple[DecisionRecord, float, str]], bool]:
+        from court_search.embed.rerank import score_pairs
+
+        if not _reranker_ready():
+            return hits, False
+        budget = min(len(hits), self.config.search.rerank_decisions)
+        per_doc = max(1, self.config.search.passages_per_decision)
+        head = hits[:budget]
+        tail = hits[budget:]
+        pairs: list[tuple[int, str]] = []
+        for index, (record, _score, _stage) in enumerate(head):
+            for passage in _passages_for_rerank(
+                record, query, knn_passages.get(record.doc_id) or [], limit=per_doc
+            ):
+                pairs.append((index, passage))
+        if not pairs:
+            return hits, False
+        scores = score_pairs(query, [text for _index, text in pairs])
+        best = [float("-inf")] * len(head)
+        for (index, _text), score in zip(pairs, scores, strict=True):
+            if score > best[index]:
+                best[index] = score
+        reranked = []
+        for index in order_by_scores(best):
+            record, _old, _stage = head[index]
+            score = best[index] if best[index] != float("-inf") else 0.0
+            reranked.append((record, score, "rerank"))
+        return reranked + list(tail), True
 
     def _lexical_search(
         self,
@@ -383,6 +540,45 @@ class SearchService:
             registry_url=record.registry_url,
             source_refs=record.source_refs,
         )
+
+
+def _reranker_ready() -> bool:
+    try:
+        from court_search.embed.rerank import reranker_available
+
+        return reranker_available()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _passages_for_rerank(
+    record: DecisionRecord,
+    query: str,
+    knn_passages: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[str]:
+    texts: list[str] = []
+    seen: set[tuple[int, int]] = set()
+    for hit in knn_passages:
+        start = max(0, int(hit.get("char_start") or 0))
+        end = min(len(record.text), int(hit.get("char_end") or 0))
+        if end <= start or (start, end) in seen:
+            continue
+        seen.add((start, end))
+        texts.append(record.text[start:end])
+        if len(texts) >= limit:
+            return texts
+    if len(texts) < limit:
+        for item in _evidence_for(record, query, max_items=limit):
+            key = (item.char_start, item.char_end)
+            if key in seen:
+                continue
+            seen.add(key)
+            texts.append(item.quote)
+            if len(texts) >= limit:
+                break
+    return texts
 
 
 def _request_id() -> str:

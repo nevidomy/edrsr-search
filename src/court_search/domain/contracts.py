@@ -89,7 +89,7 @@ class RetrievalSignals(StrictModel):
     lexical_rank: int | None = None
     semantic_rank: int | None = None
     fused_rank: int | None = None
-    ranking_stage: Literal["exact", "lexical", "fusion", "rerank"] = "lexical"
+    ranking_stage: Literal["exact", "lexical", "semantic", "fusion", "rerank"] = "lexical"
     score: float | None = None
 
 
