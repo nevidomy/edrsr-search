@@ -54,7 +54,7 @@ export COURT_SEARCH_TOKEN="$(cat data/secrets/api.token)"
 | [docs/clients.md](docs/clients.md) | Connect Claude Desktop, Claude Code, the claude.ai connector, and other hosts |
 | [docs/operations.md](docs/operations.md) | Full install: OpenSearch, the full corpus, the semantic index from Hugging Face, serving, updates, backups |
 | [docs/gpu-host.md](docs/gpu-host.md) | Everything on one NVIDIA GPU machine, step by step: CUDA torch, models, indexing, GPU query encoding and reranking, optional local encoding |
-| [deployment/gpu/rental/README.md](deployment/gpu/rental/README.md) | Encode passages yourself on rented GPUs (≈230 RTX-5090-hours for the remaining sections) |
+| [deployment/gpu/rental/README.md](deployment/gpu/rental/README.md) | Encode passages yourself on rented GPUs (whole corpus ≈300 RTX-5090-hours, ~37 h on a rented 8× RTX 5090 box) |
 | [docs/design/](docs/design/) | Original design: [implementation plan](docs/design/IMPLEMENTATION_PLAN.md), [API and MCP contracts](docs/design/API_AND_MCP.md), [deployment runbook](docs/design/DEPLOYMENT.md) |
 
 ## Repository layout

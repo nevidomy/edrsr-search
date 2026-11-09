@@ -17,14 +17,18 @@ script again and it picks up where it stopped.
 | RTX 3060 12 GB | ~50 | batch 32 |
 | H100 | not measured | expect 2–3× a 5090; run a probe before committing |
 
-On a 5090, one worker already keeps the GPU busy: two workers per GPU measured
-282/s against 277/s for one. Leave `WORKERS_PER_GPU` at 1 unless `nvidia-smi`
-shows the GPU idling.
+Workers per GPU: on a desktop 5090 (fast CPU) one worker keeps the GPU busy
+(two measured 282/s against 277/s). On a rented 8× 5090 box with an EPYC 7K62 the
+GPUs idled while each worker chunked its next file on the slower CPU; a second
+worker per GPU (`add-workers.sh`, no restart) brought them to 100% and added ~10%.
 
-Remaining work as of Nov 2026: civil (38.2M decisions) plus administrative
-(21.7M). That is about 420B characters, roughly 210M passages, or about
-**230 RTX-5090-hours**. On an 8× 5090 box that is about 30 h. Output is about
-650 GB.
+Whole corpus, all five sections: ~95.7M decisions → ~310M passages (civil 102.5M,
+administrative 91.7M, criminal 54.3M, commercial 32.8M, administrative offences
+29.0M), about **300 RTX-5090-hours** and ~1 TB of shards. Measured on a rented
+8× RTX 5090 box (host power cap 480 W per card): ~2,300 passages/s, i.e. 163.7M
+passages in 19.6 h, so ~37 h for everything. You only need this to re-encode: the
+results are published at
+[nevidomy/edrsr-search](https://huggingface.co/datasets/nevidomy/edrsr-search).
 
 ## Picking a machine (Vast.ai)
 
