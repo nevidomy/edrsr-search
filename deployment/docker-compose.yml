@@ -1,3 +1,5 @@
+# OpenSearch for court-search. Paths and sizes come from deployment/.env (not committed),
+# see deployment/env.example. Defaults keep everything under the repo's data/ directory.
 services:
   opensearch:
     build:
@@ -9,7 +11,7 @@ services:
       - node.name=opensearch
       - discovery.type=single-node
       - bootstrap.memory_lock=false
-      - OPENSEARCH_JAVA_OPTS=-Xms12g -Xmx12g
+      - OPENSEARCH_JAVA_OPTS=-Xms${OPENSEARCH_HEAP:-12g} -Xmx${OPENSEARCH_HEAP:-12g}
       - OPENSEARCH_INITIAL_ADMIN_PASSWORD=${OPENSEARCH_INITIAL_ADMIN_PASSWORD:-CourtSearch_ChangeMe_1}
       - plugins.security.disabled=true
       - DISABLE_INSTALL_DEMO_CONFIG=true
@@ -21,15 +23,13 @@ services:
     ports:
       - "127.0.0.1:9200:9200"
     volumes:
-      - opensearch-data:/usr/share/opensearch/data
-      - /mnt/f/edrsr/snapshots:/usr/share/opensearch/snapshots
-    mem_limit: 20g
+      - ${OPENSEARCH_DATA:-../data/opensearch}:/usr/share/opensearch/data
+      - ${OPENSEARCH_SNAPSHOTS:-../data/snapshots}:/usr/share/opensearch/snapshots
+    mem_limit: ${OPENSEARCH_MEM_LIMIT:-20g}
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -s http://127.0.0.1:9200 >/dev/null || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 20
       start_period: 40s
-
-volumes:
-  opensearch-data:

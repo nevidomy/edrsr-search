@@ -1,0 +1,61 @@
+# court-search configuration. Copy to config/local.yaml (not committed) and adjust.
+# Paths: absolute, "~/..." (home), or "./..." (relative to the repository root).
+
+# Where the source datasets are (Hugging Face snapshots of overthelex/edrsr-*):
+#   hf download overthelex/edrsr-gpk --repo-type dataset --local-dir ~/data/edrsr/edrsr-gpk
+raw_root: ~/data/edrsr
+
+sources:
+  - repo: overthelex/edrsr-tspk
+    path: ~/data/edrsr/edrsr-tspk
+    revision: null
+    jurisdiction: civil
+  - repo: overthelex/edrsr-kas
+    path: ~/data/edrsr/edrsr-kas
+    revision: null
+    jurisdiction: administrative
+  - repo: overthelex/edrsr-kpk
+    path: ~/data/edrsr/edrsr-kpk
+    revision: null
+    jurisdiction: criminal
+  - repo: overthelex/edrsr-gpk
+    path: ~/data/edrsr/edrsr-gpk
+    revision: null
+    jurisdiction: commercial
+  - repo: overthelex/edrsr-kupap
+    path: ~/data/edrsr/edrsr-kupap
+    revision: null
+    jurisdiction: administrative_offense
+
+storage:
+  root: ./data                       # state, reports, secrets, normalized parquet
+  # archive: /big/disk/edrsr         # optional: embedding shards under <archive>/embeddings/<spec>/<section>
+  embeddings: ~/data/edrsr/embeddings
+  models: ~/data/edrsr/models        # HF model cache (bge-m3, reranker)
+
+search:
+  url: http://127.0.0.1:9200
+  backend: opensearch                # or local_fts for a small SQLite-only slice
+  lexical_candidates: 100
+  vector_passage_candidates: 300
+  fusion_k: 60
+  rerank_decisions: 50
+  passages_per_decision: 2
+  request_timeout_seconds: 30
+
+api:
+  host: 127.0.0.1
+  internal_port: 8000
+  auth_profile: private_token        # bearer token from `court-search init-secrets`
+  token_file: ./data/secrets/api.token
+  token_hashes_file: ./data/secrets/api-token-hashes
+  default_response_chars: 30000
+  allowed_hosts:
+    - 127.0.0.1
+    - 127.0.0.1:8000
+    - localhost
+    - localhost:8000
+    # - your-host.your-tailnet.ts.net  # the public HTTPS host, if you expose one
+  public_origin: http://127.0.0.1:8000  # e.g. https://your-host.your-tailnet.ts.net for the claude.ai connector
+
+dictionaries_dir: ./config/dictionaries

@@ -1,9 +1,12 @@
 [project]
 name = "court-search"
 version = "0.1.0"
-description = "Ukrainian court decision search API and MCP tools"
+description = "Search Ukrainian court decisions (EDRSR): hybrid BM25 + bge-m3 retrieval over REST and MCP"
 readme = "README.md"
 requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Vitalii Nevidomyi" }]
+keywords = ["mcp", "legal", "ukraine", "court-decisions", "opensearch", "bge-m3", "retrieval"]
 dependencies = [
   "fastapi>=0.116,<1",
   "uvicorn[standard]>=0.35,<1",
@@ -12,6 +15,7 @@ dependencies = [
   "pyyaml>=6.0.2,<7",
   "httpx>=0.28,<1",
   "pyarrow>=20,<23",
+  "numpy>=1.26,<3",
   "opensearch-py>=3.0,<4",
   "mcp>=2.2,<3",
   "typer>=0.16,<1",
@@ -28,6 +32,11 @@ gpu = [
   "transformers>=4.44,<5",
   "sentence-transformers>=3.1,<6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/nevidomy/edrsr-search"
+Dataset = "https://huggingface.co/datasets/nevidomy/edrsr-search"
+Issues = "https://github.com/nevidomy/edrsr-search/issues"
 
 [project.scripts]
 court-search = "court_search.cli.main:app"

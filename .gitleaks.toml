@@ -1,0 +1,8 @@
+# Secret scanning (CI and pre-commit). Default rules plus a few known non-secrets.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "placeholders, test fixtures, lockfile hashes"
+paths = ['''uv\.lock$''']
+regexes = ['''CourtSearch_ChangeMe_1''', '''secret-token''']

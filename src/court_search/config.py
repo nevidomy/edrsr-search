@@ -70,8 +70,14 @@ class AppConfig(BaseModel):
 
 
 def _resolve_paths(data: dict[str, Any], config_dir: Path) -> dict[str, Any]:
+    # "./x" is relative to the repository root (the parent of config/), not the CWD,
+    # so services and CLI runs from anywhere agree on where data lives.
+    base = config_dir.parent
+
     def resolve(value: Any) -> Any:
-        if isinstance(value, str) and (value.startswith("./") or value.startswith("/") or value.startswith("~")):
+        if isinstance(value, str) and value.startswith("./"):
+            return (base / value[2:]).resolve()
+        if isinstance(value, str) and (value.startswith("/") or value.startswith("~")):
             return Path(value).expanduser()
         if isinstance(value, dict):
             return {k: resolve(v) for k, v in value.items()}
@@ -90,7 +96,7 @@ def _resolve_paths(data: dict[str, Any], config_dir: Path) -> dict[str, Any]:
     storage.setdefault("snapshots", root / "snapshots")
     storage.setdefault("secrets", root / "secrets")
     storage.setdefault("models", root / "models")
-    storage.setdefault("archive", Path("/mnt/f/edrsr"))
+    storage.setdefault("archive", root / "archive")
     resolved["dictionaries_dir"] = Path(resolved.get("dictionaries_dir", config_dir / "dictionaries"))
     return resolved
 

@@ -1,0 +1,18 @@
+# Template: render with deployment/systemd/install.sh (fills @ROOT@).
+[Unit]
+Description=court-search API and MCP
+After=default.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=COURT_SEARCH_CONFIG=@ROOT@/config/local.yaml
+Environment=PYTHONUNBUFFERED=1
+ExecStartPre=@ROOT@/deployment/ensure-opensearch.sh
+ExecStart=@ROOT@/deployment/run-api.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

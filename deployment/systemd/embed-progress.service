@@ -1,0 +1,20 @@
+# Template: render with deployment/systemd/install.sh (fills @ROOT@ and @BIND@).
+# Optional extra machines: Environment=EXTRA_GPU_SSH=<ssh args> EXTRA_GPU_NAME=<label>
+[Unit]
+Description=court-search embedding progress page (localhost + tailnet only)
+After=default.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=@ROOT@
+Environment=COURT_SEARCH_CONFIG=@ROOT@/config/local.yaml
+Environment=PYTHONUNBUFFERED=1
+# Never 0.0.0.0 on WSL mirrored networking: that would expose the page on the LAN.
+ExecStart=@ROOT@/.venv/bin/python deployment/gpu/progress.py --serve @BIND@ --watch 30
+Nice=10
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

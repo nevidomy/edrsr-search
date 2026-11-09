@@ -13,3 +13,8 @@ data/**
 *.log
 .coverage
 htmlcov/
+
+# Machine-specific settings and scripts (kept locally, never published)
+config/local.yaml
+deployment/.env
+local/
