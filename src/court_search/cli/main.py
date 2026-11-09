@@ -202,9 +202,17 @@ def embed_passages_cmd(
     max_length: int = typer.Option(1000, "--max-length"),
     device: Optional[str] = typer.Option(None, "--device"),
     limit_files: Optional[int] = typer.Option(None, "--limit-files"),
+    min_source_rows: Optional[int] = typer.Option(None, "--min-source-rows"),
+    max_passages: Optional[int] = typer.Option(None, "--max-passages"),
     spec_name: str = typer.Option("bge-m3-dense-v1", "--spec-name"),
+    shard: Optional[str] = typer.Option(
+        None, "--shard", help="k/n: this machine's size-balanced share of files (0-based k)"
+    ),
+    worker: Optional[str] = typer.Option(
+        None, "--worker", help="Name for one of several processes sharing the output dir (one per GPU)"
+    ),
 ) -> None:
-    from court_search.embed.run import embed_section
+    from court_search.embed.run import embed_section, parse_shard
 
     report = embed_section(
         load_config(_config(config)),
@@ -213,7 +221,44 @@ def embed_passages_cmd(
         max_length=max_length,
         device=device,
         limit_files=limit_files,
+        min_source_rows=min_source_rows,
+        max_passages=max_passages,
         spec_name=spec_name,
+        shard=parse_shard(shard),
+        worker=worker,
+    )
+    typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+
+
+@app.command("index-passages")
+def index_passages_cmd(
+    section: str = typer.Option(..., "--section"),
+    config: Optional[Path] = typer.Option(None, "--config"),
+    limit_files: Optional[int] = typer.Option(None, "--limit-files", help="Max new files; omit for all remaining"),
+    min_passages: int = typer.Option(0, "--min-passages"),
+    recreate: bool = typer.Option(False, "--recreate"),
+    resume: bool = typer.Option(True, "--resume/--no-resume"),
+    spec_name: str = typer.Option("bge-m3-dense-v1", "--spec-name"),
+    shard: Optional[str] = typer.Option(
+        None, "--shard", help="k/n: load the k-th of n size-balanced file groups (run n loaders in parallel)"
+    ),
+    from_dir: Optional[Path] = typer.Option(
+        None, "--from-dir", help="index plain parquet files from this dir (e.g. the HF dataset's data/<section>)"
+    ),
+) -> None:
+    from court_search.embed.index_os import index_passage_shards
+    from court_search.embed.run import parse_shard
+
+    report = index_passage_shards(
+        load_config(_config(config)),
+        section_id=section,
+        spec_name=spec_name,
+        limit_files=limit_files,
+        min_passages=min_passages,
+        recreate=recreate,
+        resume=resume,
+        shard=parse_shard(shard),
+        from_dir=from_dir,
     )
     typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
 

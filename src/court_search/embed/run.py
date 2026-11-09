@@ -41,9 +41,17 @@ def chunk_section(
     section_id: str,
     limit_files: int | None = None,
     spec_name: str = EMBED_SPEC_NAME,
+    shard: tuple[int, int] | None = None,
+    worker: str | None = None,
 ) -> dict[str, Any]:
     return _run_section(
-        config, section_id=section_id, encode=False, limit_files=limit_files, spec_name=spec_name
+        config,
+        section_id=section_id,
+        encode=False,
+        limit_files=limit_files,
+        spec_name=spec_name,
+        shard=shard,
+        worker=worker,
     )
 
 
@@ -55,7 +63,11 @@ def embed_section(
     max_length: int = 1000,
     device: str | None = None,
     limit_files: int | None = None,
+    min_source_rows: int | None = None,
+    max_passages: int | None = None,
     spec_name: str = EMBED_SPEC_NAME,
+    shard: tuple[int, int] | None = None,
+    worker: str | None = None,
 ) -> dict[str, Any]:
     return _run_section(
         config,
@@ -65,7 +77,11 @@ def embed_section(
         max_length=max_length,
         device=device,
         limit_files=limit_files,
+        min_source_rows=min_source_rows,
+        max_passages=max_passages,
         spec_name=spec_name,
+        shard=shard,
+        worker=worker,
     )
 
 
@@ -78,8 +94,19 @@ def _run_section(
     max_length: int = 1000,
     device: str | None = None,
     limit_files: int | None = None,
+    min_source_rows: int | None = None,
+    max_passages: int | None = None,
     spec_name: str = EMBED_SPEC_NAME,
+    shard: tuple[int, int] | None = None,
+    worker: str | None = None,
 ) -> dict[str, Any]:
+    """Encode (or only chunk) one section, resumable per source file.
+
+    ``shard=(k, n)`` keeps the k-th of n size-balanced file groups, so n machines
+    can split a section without talking to each other. ``worker`` lets several
+    processes on one machine share the same output directory: each claims files
+    atomically under ``claims/`` and reports progress to ``workers/<name>.json``.
+    """
     section = SECTION_BY_ID.get(section_id)
     if section is None:
         raise ValueError(f"unknown section {section_id}; choose from {list(SECTION_BY_ID)}")
@@ -87,31 +114,55 @@ def _run_section(
     files = sorted((source.path / "data").glob("*.parquet")) if (source.path / "data").is_dir() else []
     if not files:
         raise ValueError(f"no parquet under {source.path / 'data'}")
+    if min_source_rows:
+        files = [path for path in files if int(pq.ParquetFile(path).metadata.num_rows) >= min_source_rows]
+        if not files:
+            raise ValueError(f"no parquet with at least {min_source_rows} rows under {source.path / 'data'}")
     if limit_files is not None:
         files = files[: max(0, limit_files)]
+    if shard is not None:
+        files = shard_files(files, *shard)
 
     out_dir = _section_dir(config, section_id, spec_name=spec_name)
     (out_dir / "files").mkdir(parents=True, exist_ok=True)
     (out_dir / "shards").mkdir(parents=True, exist_ok=True)
+    if worker:
+        (out_dir / "claims").mkdir(parents=True, exist_ok=True)
+        (out_dir / "workers").mkdir(parents=True, exist_ok=True)
     encoder = _load_encoder(batch_size=batch_size, max_length=max_length, device=device) if encode else None
     started = time.perf_counter()
     states = _load_file_states(out_dir)
     already = sum(1 for path in files if _is_done(states.get(path.name), encode, out_dir))
 
     _write_spec(out_dir, spec_name=spec_name, encode=encode, batch_size=batch_size, max_length=max_length, device=device)
-    _write_checkpoint(out_dir, section_id=section_id, files=files, states=states, encode=encode, elapsed_s=0)
+    if not worker:
+        _write_checkpoint(out_dir, section_id=section_id, files=files, states=states, encode=encode, elapsed_s=0)
 
     print(
         f"{'embed' if encode else 'chunk'} {section_id}: files={len(files)} "
-        f"already={already} batch={batch_size if encode else '-'} out={out_dir}",
+        f"already={already} batch={batch_size if encode else '-'} "
+        f"shard={'/'.join(map(str, shard)) if shard else '-'} worker={worker or '-'} out={out_dir}",
         file=sys.stderr,
     )
-    for path in files:
+    # Workers take the largest files first so the tail of the run stays short.
+    order = sorted(files, key=lambda item: item.stat().st_size, reverse=True) if worker else files
+    mine = {"files_done": 0, "passages": 0, "encode_s": 0.0}
+    for path in order:
         existing = states.get(path.name)
         if _is_done(existing, encode, out_dir):
             continue
+        if worker:
+            if _is_done(_read_state(out_dir, path), encode, out_dir):
+                continue
+            if not _claim(out_dir, path, worker):
+                continue
+            _write_worker_progress(out_dir, worker, section_id, current=path.name, **mine)
         file_started = time.perf_counter()
-        rows = list(_iter_passages(path, source, estimate_tokens))
+        rows: list[dict[str, Any]] = []
+        for row in _iter_passages(path, source, estimate_tokens):
+            rows.append(row)
+            if max_passages and len(rows) >= max_passages:
+                break
         vectors = encoder.encode([row["text"] for row in rows]) if encoder and rows else None
         file_s = time.perf_counter() - file_started
         shard_rel = f"shards/{path.stem}.parquet"
@@ -133,6 +184,14 @@ def _run_section(
         _atomic_write_json(out_dir / "files" / f"{path.stem}.json", state)
         states[path.name] = state
         elapsed = time.perf_counter() - started
+        rate = (len(rows) / file_s) if file_s > 0 else 0
+        if worker:
+            mine["files_done"] += 1
+            mine["passages"] += len(rows)
+            mine["encode_s"] += file_s
+            _write_worker_progress(out_dir, worker, section_id, current=None, **mine)
+            print(f"{path.name} passages={len(rows)} {rate:.0f}/s worker={worker} mine={mine['files_done']}", file=sys.stderr)
+            continue
         _write_checkpoint(
             out_dir,
             section_id=section_id,
@@ -141,13 +200,15 @@ def _run_section(
             encode=encode,
             elapsed_s=elapsed,
         )
-        rate = (len(rows) / file_s) if file_s > 0 else 0
         print(
             f"{path.name} passages={len(rows)} {rate:.0f}/s "
             f"done={sum(1 for item in files if _is_done(states.get(item.name), encode, out_dir))}/{len(files)}",
             file=sys.stderr,
         )
 
+    if worker:
+        # Other workers wrote their own file states; rebuild totals from disk.
+        states = _load_file_states(out_dir)
     checkpoint = _write_checkpoint(
         out_dir,
         section_id=section_id,
@@ -164,6 +225,111 @@ def _run_section(
     }
     _atomic_write_json(out_dir / "report.json", report)
     return report
+
+
+def rebuild_checkpoint(
+    config: AppConfig,
+    *,
+    section_id: str,
+    spec_name: str = EMBED_SPEC_NAME,
+    shard: tuple[int, int] | None = None,
+) -> dict[str, Any]:
+    """Rewrite checkpoint.json/report.json from per-file state on disk (no GPU, no encoding)."""
+    section = SECTION_BY_ID[section_id]
+    source = _source_for_section(config, section)
+    files = sorted((source.path / "data").glob("*.parquet"))
+    if shard is not None:
+        files = shard_files(files, *shard)
+    out_dir = _section_dir(config, section_id, spec_name=spec_name)
+    states = _load_file_states(out_dir)
+    checkpoint = _write_checkpoint(
+        out_dir, section_id=section_id, files=files, states=states, encode=True, elapsed_s=0, finished=True
+    )
+    report = {
+        "section": section_id,
+        "output": str(out_dir),
+        **{key: checkpoint[key] for key in ("encode", "files_done", "files_total", "documents", "passages")},
+    }
+    _atomic_write_json(out_dir / "report.json", report)
+    return report
+
+
+def parse_shard(value: str | None) -> tuple[int, int] | None:
+    """Parse ``"k/n"`` (0-based k) into ``(k, n)``."""
+    if value is None or value == "":
+        return None
+    try:
+        k_text, n_text = value.split("/", 1)
+        k, n = int(k_text), int(n_text)
+    except ValueError as exc:
+        raise ValueError(f"shard must look like k/n, got {value!r}") from exc
+    if n < 1 or not 0 <= k < n:
+        raise ValueError(f"shard {value!r}: need 0 <= k < n")
+    return k, n
+
+
+def shard_files(files: list[Path], k: int, n: int) -> list[Path]:
+    """Deterministic size-balanced split: largest file to the lightest group.
+
+    Every machine computes the same assignment from the same file set, so no
+    coordination is needed. Returns group ``k`` in name order.
+    """
+    if n == 1:
+        return list(files)
+    loads = [0] * n
+    groups: list[list[Path]] = [[] for _ in range(n)]
+    for path in sorted(files, key=lambda item: (-item.stat().st_size, item.name)):
+        target = min(range(n), key=lambda index: (loads[index], index))
+        groups[target].append(path)
+        loads[target] += path.stat().st_size
+    return sorted(groups[k], key=lambda item: item.name)
+
+
+def _claim(out_dir: Path, path: Path, worker: str) -> bool:
+    """Atomically claim a source file. A worker may re-take its own claim after a restart."""
+    claim = out_dir / "claims" / f"{path.stem}.claim"
+    try:
+        fd = os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        try:
+            return claim.read_text(encoding="utf-8").strip() == worker
+        except OSError:
+            return False
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(worker)
+    return True
+
+
+def _read_state(out_dir: Path, path: Path) -> dict[str, Any] | None:
+    state_path = out_dir / "files" / f"{path.stem}.json"
+    try:
+        return json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _write_worker_progress(
+    out_dir: Path,
+    worker: str,
+    section_id: str,
+    *,
+    current: str | None,
+    files_done: int,
+    passages: int,
+    encode_s: float,
+) -> None:
+    _atomic_write_json(
+        out_dir / "workers" / f"{worker}.json",
+        {
+            "worker": worker,
+            "section": section_id,
+            "current": current,
+            "files_done": files_done,
+            "passages": passages,
+            "passages_per_s": round(passages / encode_s, 1) if encode_s > 0 else None,
+            "updated_at": datetime.now(UTC).isoformat(),
+        },
+    )
 
 
 def _is_done(state: dict[str, Any] | None, encode: bool, out_dir: Path) -> bool:
@@ -232,7 +398,8 @@ def _write_checkpoint(
 
 def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # Per-process temp name: several workers may finish and rewrite checkpoint.json at once.
+    tmp = path.with_suffix(f"{path.suffix}.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
 
