@@ -2,7 +2,9 @@
 
 This sets up the whole corpus: OpenSearch with full-text search over every decision,
 plus semantic search over passages, served over REST and MCP. For a five-minute try on a
-few hundred decisions, use the quick start in the [README](../README.md) instead.
+few hundred decisions, use the quick start in the [README](../README.md) instead. For a
+machine with an NVIDIA GPU, [gpu-host.md](gpu-host.md) is the same path step by step
+with every GPU part enabled.
 
 ## What you need
 
