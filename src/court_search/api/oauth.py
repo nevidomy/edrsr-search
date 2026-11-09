@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import secrets
@@ -25,12 +26,27 @@ def pkce_challenge(verifier: str) -> str:
     return _b64url(hashlib.sha256(verifier.encode("ascii")).digest())
 
 
+# Registration is open (MCP clients self-register), so bound what anyone can make us store.
+MAX_CLIENTS = 500
+MAX_PENDING_CODES = 200
+MAX_REDIRECT_URIS = 10
+MAX_URI_LENGTH = 2000
+FAILED_TOKEN_DELAY_S = 1.0
+
+
 @dataclass
 class OAuthStore:
     clients: dict[str, dict[str, Any]] = field(default_factory=dict)
     codes: dict[str, dict[str, Any]] = field(default_factory=dict)
     refresh: dict[str, str] = field(default_factory=dict)
     lock: Lock = field(default_factory=Lock)
+
+
+def prune_codes(store: OAuthStore, now: float | None = None) -> None:
+    """Drop expired authorization codes (call with store.lock held)."""
+    now = time.time() if now is None else now
+    for code in [code for code, record in store.codes.items() if record.get("exp", 0) < now]:
+        del store.codes[code]
 
 
 def public_origin(request: Request) -> str:
@@ -81,6 +97,12 @@ async def register(request: Request) -> JSONResponse:
     redirect_uris = body.get("redirect_uris") or []
     if not redirect_uris:
         raise HTTPException(status_code=400, detail="redirect_uris is required")
+    if (
+        not isinstance(redirect_uris, list)
+        or len(redirect_uris) > MAX_REDIRECT_URIS
+        or any(not isinstance(uri, str) or len(uri) > MAX_URI_LENGTH for uri in redirect_uris)
+    ):
+        raise HTTPException(status_code=400, detail="invalid redirect_uris")
     client_id = secrets.token_urlsafe(16)
     record = {
         "client_id": client_id,
@@ -90,6 +112,9 @@ async def register(request: Request) -> JSONResponse:
     }
     store: OAuthStore = request.app.state.oauth
     with store.lock:
+        if len(store.clients) >= MAX_CLIENTS:
+            # Refuse rather than evict: a flood must not log out an existing client.
+            raise HTTPException(status_code=429, detail="too many registered clients")
         store.clients[client_id] = record
     return JSONResponse({**record, "grant_types": ["authorization_code", "refresh_token"], "response_types": ["code"]})
 
@@ -145,10 +170,14 @@ async def authorize_submit(
     _validate_authorize(request, client_id, redirect_uri, response_type, code_challenge, code_challenge_method)
     hashes = request.app.state.token_hashes
     if not token_valid(token.strip(), hashes):
+        await asyncio.sleep(FAILED_TOKEN_DELAY_S)  # makes guessing slow, costs a real user nothing
         raise HTTPException(status_code=401, detail="Invalid API token")
     code = secrets.token_urlsafe(24)
     store: OAuthStore = request.app.state.oauth
     with store.lock:
+        prune_codes(store)
+        if len(store.codes) >= MAX_PENDING_CODES:
+            raise HTTPException(status_code=429, detail="too many pending authorizations")
         store.codes[code] = {
             "token": token.strip(),
             "client_id": client_id,
