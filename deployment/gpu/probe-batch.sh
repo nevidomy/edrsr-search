@@ -19,6 +19,8 @@ for batch in ${BATCHES:-8 16 32 64 96 128}; do
       --section "$SECTION" \
       --batch-size "$batch" \
       --limit-files 1 \
+      --min-source-rows "${MIN_SOURCE_ROWS:-10000}" \
+      --max-passages "${MAX_PASSAGES:-2048}" \
       --spec-name probe-batch; then
     echo "batch $batch failed (likely OOM). keeping $ok"
     break

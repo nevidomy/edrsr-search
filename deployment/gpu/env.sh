@@ -52,3 +52,13 @@ path.write_text(json.dumps(data, indent=2) + '\n')
 print(path)
 "
 }
+
+# Where finished embedding shards live for this config: <storage.archive>/embeddings/<spec>
+# when that exists (big disk), else <storage.embeddings>/<spec>. Same rule as index-passages.
+spec_root() {
+  "$PYTHON" -c "
+from court_search.runtime import load_config
+c = load_config(); spec = '${1:-bge-m3-dense-v1}'
+archive = c.storage.archive / 'embeddings' / spec
+print(archive if archive.exists() else c.storage.embeddings / spec)"
+}
