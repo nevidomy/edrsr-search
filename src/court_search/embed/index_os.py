@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -58,7 +59,8 @@ def index_passage_shards(
     min_passages: int = 0,
     recreate: bool = False,
     resume: bool = True,
-    refresh_every: int = 10,
+    refresh_every: int = 0,
+    file_attempts: int = 6,
     shard: tuple[int, int] | None = None,
     from_dir: Path | None = None,
 ) -> dict[str, Any]:
@@ -116,7 +118,7 @@ def index_passage_shards(
         errors = 0
     added_now = 0
     for offset, path in enumerate(remaining, start=1):
-        added, failed = index.bulk_passages(name, _iter_passage_docs(path, section_id))
+        added, failed = _load_file_with_retries(index, name, path, section_id, attempts=file_attempts)
         indexed += added
         added_now += added
         errors += failed
@@ -128,17 +130,19 @@ def index_passage_shards(
             files=done,
             indexed=indexed,
             errors=errors,
-            count=index.passage_count(spec_name),
+            count=_safe_count(index, spec_name),
         )
         print(
             f"{path.name} indexed=+{added} errors={failed} files={len(done)}/{len(chosen)} total={indexed}",
             flush=True,
         )
+        # The index refreshes itself (refresh_interval); an explicit refresh on a large,
+        # busy index can take minutes, so it is opt-in and never fatal.
         if refresh_every and offset % refresh_every == 0:
-            index.client.indices.refresh(index=name)
-    if remaining:
-        index.client.indices.refresh(index=name)
-    count = index.passage_count(spec_name)
+            _safe_refresh(index, name)
+    if remaining and refresh_every:
+        _safe_refresh(index, name)
+    count = _safe_count(index, spec_name)
     _write_report(
         report_path,
         index=name,
@@ -176,6 +180,41 @@ def _write_report(path: Path, *, index: str, section_id: str, files: list[str], 
         + "\n",
         encoding="utf-8",
     )
+
+
+def _load_file_with_retries(index: OpenSearchIndex, name: str, path: Path, section_id: str, *, attempts: int) -> tuple[int, int]:
+    """Bulk-load one shard; on a timeout or dropped connection wait and send the file again.
+
+    Re-sending is safe: documents use passage_id as _id, so they overwrite, never duplicate.
+    """
+    from opensearchpy.exceptions import ConnectionError as OSConnectionError
+    from opensearchpy.exceptions import ConnectionTimeout, TransportError
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return index.bulk_passages(name, _iter_passage_docs(path, section_id))
+        except (ConnectionTimeout, OSConnectionError, TransportError) as exc:
+            if attempt == attempts:
+                raise
+            wait = min(600, 30 * 2 ** (attempt - 1))
+            print(f"{path.name}: {type(exc).__name__} on attempt {attempt}; retrying the file in {wait}s", flush=True)
+            time.sleep(wait)
+    raise RuntimeError("unreachable")
+
+
+def _safe_count(index: OpenSearchIndex, spec_name: str) -> int:
+    try:
+        return index.passage_count(spec_name)
+    except Exception as exc:  # informational only: never stop a load over it
+        print(f"passage count unavailable ({type(exc).__name__}); continuing", flush=True)
+        return -1
+
+
+def _safe_refresh(index: OpenSearchIndex, name: str) -> None:
+    try:
+        index.client.indices.refresh(index=name, request_timeout=600)
+    except Exception as exc:
+        print(f"refresh skipped ({type(exc).__name__}); the index refreshes on its own", flush=True)
 
 
 INDEX_COLUMNS = ["passage_id", "doc_id", "jurisdiction", "char_start", "char_end", "vector"]

@@ -248,7 +248,7 @@ class OpenSearchIndex:
             self.client,
             ({**action, "_index": index_name} for action in actions),
             raise_on_error=False,
-            request_timeout=180,
+            request_timeout=600,  # merges on a ~1 TB index can stall a bulk for minutes
             chunk_size=200,
             # Parallel loaders can fill the write queue: back off and retry 429s
             # instead of silently counting those passages as failed.

@@ -103,3 +103,30 @@ def test_from_dir_reads_published_float32_format(tmp_path: Path, monkeypatch) ->
     assert report["indexed"] == 3 and len(sent) == 3
     assert len(sent[0]["vector"]) == 1024 and abs(sent[0]["vector"][0] - 0.03125) < 1e-9
     assert (published / "os-index.json").is_file()
+
+
+def test_timed_out_file_is_retried_not_fatal(tmp_path: Path, monkeypatch) -> None:
+    from opensearchpy.exceptions import ConnectionTimeout
+
+    section = tmp_path / "embeddings" / "bge-m3-dense-v1" / "civil"
+    (section / "shards").mkdir(parents=True)
+    _shard(section / "shards", "edrsr-000-000", 3)
+    calls = {"n": 0}
+
+    def flaky_bulk(self, name, actions):
+        calls["n"] += 1
+        docs = list(actions)
+        if calls["n"] == 1:
+            raise ConnectionTimeout("TIMEOUT", "read timed out", None)
+        return len(docs), 0
+
+    def count_times_out(self, spec_name):
+        raise ConnectionTimeout("TIMEOUT", "read timed out", None)
+
+    monkeypatch.setattr(index_os, "OpenSearchIndex", _FakeIndex)
+    monkeypatch.setattr(_FakeIndex, "bulk_passages", flaky_bulk)
+    monkeypatch.setattr(_FakeIndex, "passage_count", count_times_out)
+    monkeypatch.setattr(index_os, "_shard_root", lambda config, section_id, spec_name: section)
+    monkeypatch.setattr(index_os.time, "sleep", lambda seconds: None)
+    report = index_os.index_passage_shards(type("Cfg", (), {"search": None})(), section_id="civil")
+    assert calls["n"] == 2 and report["indexed"] == 3 and report["count"] == -1
